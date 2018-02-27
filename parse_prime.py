@@ -100,7 +100,7 @@ def get_kinetics(depository, reactions_dict):
 
     for prime_id, rxn in reactions_dict.iteritems():
         data_dir = os.path.join(data_parent_dir, prime_id)
-        kinetics_list = []
+        kinetics_dict = {}
 
         for xml in glob.iglob(os.path.join(data_dir, 'rk*.xml')):
             try:
@@ -113,14 +113,15 @@ def get_kinetics(depository, reactions_dict):
             except KineticsError as e:
                 warnings.warn('Skipped {}: {}'.format(xml, e))
             else:
-                kinetics_list.append(prime_kinetics)
+                kinetics_dict[prime_kinetics.prime_id] = prime_kinetics
 
         # Determine which kinetics expression to keep
-        if kinetics_list:
+        if kinetics_dict:
             # Remove kinetics corresponding to a "sum" rate law type
-            sum_types = {k for k in kinetics_list if k.rate_law_type == 'sum'}
-            links = {kl for kl in kinetics_list for k in sum_types if kl.prime_id in kinetics_list[k].links}
-            kinetics_list_trimmed = [k for k in kinetics_list if k not in sum_types and k not in links]
+            sum_types = {k for k in kinetics_dict.itervalues() if k.rate_law_type == 'sum'}
+            links = {kl for kl in kinetics_dict.itervalues() for k in sum_types
+                     if kl.prime_id in kinetics_dict[k.prime_id].links}
+            kinetics_list_trimmed = [k for k in kinetics_dict.itervalues() if k not in sum_types and k not in links]
 
             if kinetics_list_trimmed:
                 kinetics_list_trimmed.sort(key=lambda kin: kin.year, reverse=True)  # Use newest data first
