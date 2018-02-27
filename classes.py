@@ -45,30 +45,21 @@ class PrIMeSpecies(object):
         and finally try to parse species names.
         """
         if self.inchi is not None:
-            rmg_species = self.parse_inchi()
-        elif self.cas is not None:
+            return self.parse_inchi()
+        if self.cas is not None:
             try:
-                rmg_species = self.parse_cas()
+                return self.parse_cas()
             except ConversionError:
                 if self.names is not None:
-                    try:
-                        rmg_species = self.parse_names()
-                    except ConversionError:
-                        raise ConversionError(
-                            'Could not resolve CAS number of name for species {}.'.format(self.prime_id)
-                        )
-        elif self.names is not None:
-            try:
-                rmg_species = self.parse_names()
-            except ConversionError:
-                raise ConversionError(
-                    'Could not resolve CAS number of name for species {}.'.format(self.prime_id)
-                )
-        else:
-            raise ConversionError(
-                'InChI, CAS, or name required for structure conversion of species {}.'.format(self.prime_id)
-            )
-        return rmg_species
+                    pass
+                else:
+                    raise
+        if self.names is not None:
+            return self.parse_names()
+
+        raise ConversionError(
+            'InChI, CAS, or name required for structure conversion of species {}.'.format(self.prime_id)
+        )
 
     def parse_inchi(self):
         rmg_species = Species()
@@ -78,7 +69,7 @@ class PrIMeSpecies(object):
     def parse_cas(self):
         smiles = cirpy.resolve(self.cas, 'smiles', ['cas_number'])
         if smiles is None:
-            raise ConversionError('Could not resolve CAS number for species.'.format(self.prime_id))
+            raise ConversionError('Could not resolve CAS number for species {}.'.format(self.prime_id))
         else:
             return Species().fromSMILES(smiles)
 
