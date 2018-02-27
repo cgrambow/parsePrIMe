@@ -105,6 +105,7 @@ class PrIMeReaction(object):
         self.reactants = None
         self.products = None
         self.kinetics = None
+        self._direction_matched = False
 
         self._parse_species_coeffs(species_coeffs, species_dict)
         self._check_stoichiometry()
@@ -157,10 +158,25 @@ class PrIMeReaction(object):
         if not reactant_counts == product_counts:
             raise StoichiometryError('Reaction {} has invalid stoichiometry.'.format(self.prime_id))
 
-    def reverse(self):
-        new_products = list(self.reactants)
-        self.reactants = list(self.products)
-        self.products = new_products
+    def match_direction(self):
+        """
+        Match the direction of reactants and products to match the
+        kinetics expression.
+        """
+        if self.kinetics is not None:
+            if self.kinetics.direction == 'forward':
+                self._direction_matched = True
+            elif self.kinetics.direction == 'reverse':
+                new_products = list(self.reactants)
+                self.reactants = list(self.products)
+                self.products = new_products
+                self._direction_matched = True
+            else:
+                raise Exception(
+                    'Invalid kinetics direction "{}" in reaction {}.'.format(self.kinetics.direction, self.prime_id)
+                )
+        else:
+            raise Exception('No kinetics set for reaction {}.'.format(self.prime_id))
 
     def get_rmg_reaction(self):
         """
@@ -168,6 +184,8 @@ class PrIMeReaction(object):
         """
         if not all((self.reactants, self.products, self.kinetics)):
             raise ConversionError('Missing reactants, products, or kinetics in reaction {}.'.format(self.prime_id))
+        if not self._direction_matched:
+            self.match_direction()
         
         reaction = Reaction()
         reaction.reactants = [s.get_rmg_species() for s in self.reactants]
