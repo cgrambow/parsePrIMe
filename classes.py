@@ -35,6 +35,9 @@ class PrIMeSpecies(object):
     def __str__(self):
         return self.prime_id
 
+    def __repr__(self):
+        return self.__class__.__name__ + '(' + str(self) + ')'
+
     def get_rmg_species(self):
         """
         Convert identifiers from PrIMe database to RMG molecule with
@@ -112,6 +115,9 @@ class PrIMeReaction(object):
 
     def __str__(self):
         return self.prime_id
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(' + str(self) + ')'
 
     def _parse_species_coeffs(self, species_coeffs, species_dict):
         """
