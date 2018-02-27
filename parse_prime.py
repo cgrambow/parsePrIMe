@@ -224,36 +224,32 @@ def parse_kinetics(xml, rxn, pdep=False):
     # Extract namespace
     ns = nsprog.match(root.tag).group(0)
 
+    # Extract rate law type
+    try:
+        rate_law_type = root.attrib['rateLawType']
+    except KeyError:
+        # Check later if there is a rate coefficient
+        rate_law_type = None
+    else:
+        if rate_law_type == 'mass action':
+            pass
+        elif rate_law_type == 'sum':
+            # Save the links to the kinetics that are meant to be summed up
+            reaction_link = root.find(ns + 'reactionLink')
+            links = {rate_link.attrib['primeID'] for rate_link in reaction_link}
+            return PrIMeKinetics(prime_id, rate_law_type='sum', links=links)
+        elif rate_law_type in ('third body', 'unimolecular', 'chemical activation'):
+            if pdep:
+                raise NotImplementedError('P-dep has not been implemented for "{}" type.'.format(rate_law_type))
+            else:
+                raise KineticsError('P-dep kinetics: {}.'.format(rate_law_type))
+        else:
+            raise Exception('Unknown rate law type: {}'.format(rate_law_type))
+
     # Make sure kinetics exist
     rate_coeff = root.find(ns + 'rateCoefficient')
     if rate_coeff is None:
         raise KineticsError('No rate coefficient found.')
-
-    # Extract year
-    ref = root.find(ns + 'bibliographyLink')
-    year_match = yearprog.search(ref.attrib['preferredKey'])
-    if year_match is None:
-        year = None
-        warnings.warn('No year in {}.'.format(xml))
-    else:
-        year = int(year_match.group(0))
-
-    # Extract rate law type
-    rate_law_type = root.attrib['rateLawType']  # Check for key error?
-    if rate_law_type == 'mass action':
-        pass
-    elif rate_law_type == 'sum':
-        # Save the links to the kinetics that are meant to be summed up
-        reaction_link = root.find(ns + 'reactionLink')
-        links = {rate_link.attrib['primeID'] for rate_link in reaction_link}
-        return PrIMeKinetics(prime_id, rate_law_type='sum', links=links)
-    elif rate_law_type in ('third body', 'unimolecular', 'chemical activation'):
-        if pdep:
-            raise NotImplementedError('P-dep has not been implemented for "{}" type.'.format(rate_law_type))
-        else:
-            raise KineticsError('P-dep kinetics: {}.'.format(rate_law_type))
-    else:
-        raise Exception('Unknown rate law type: {}'.format(rate_law_type))
 
     # Extract kinetics
     direction = rate_coeff.attrib['direction'].lower()
@@ -288,9 +284,19 @@ def parse_kinetics(xml, rxn, pdep=False):
         raise KineticsError('Missing activation energy.')
 
     # If A has units involving mol and is very small, then it's probably molecules
-    if 'mol' in a[1] and a[0] < 1.0:
+    # Smallness is assessed based on an "effective" A at 1000 K (i.e. A*T^n)
+    if a[1] == 'cm^3/(mol*s)' and a[0] * 1000.0**n < 1.0:
         a[1].replace('mol', 'molecule')
         warnings.warn('Replaced "mol" by "molecule" in units for {}.'.format(xml))
+
+    # Extract year
+    ref = root.find(ns + 'bibliographyLink')
+    year_match = yearprog.search(ref.attrib['preferredKey'])
+    if year_match is None:
+        year = None
+        warnings.warn('No year in {}.'.format(xml))
+    else:
+        year = int(year_match.group(0))
 
     return PrIMeKinetics(prime_id,
                          expression=Arrhenius(A=a, n=n, Ea=e),
