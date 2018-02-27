@@ -358,9 +358,7 @@ def _format_units(units, rxn, direction):
                 raise NotImplementedError(
                     '{} products have not been implemented yet for units {}.'.format(len(rxn.products), units)
                 )
-    elif units == 'K':
-        return units
-    elif units == 'cal/mol':
+    elif units == 'K' or units == 'cal/mol' or units == 'kcal/mol':
         return units
     elif units == '':
         raise KineticsError('Missing units.')
