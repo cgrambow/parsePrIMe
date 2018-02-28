@@ -1,17 +1,22 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
+from __future__ import print_function
+
 import argparse
 import glob
 import os
 import re
+import sys
+import urllib2
 import warnings
 import xml.etree.cElementTree as ET
 
 from rmgpy.kinetics import Arrhenius
+from rmgpy.exceptions import AtomTypeError
 
-from classes import PrIMeSpecies, PrIMeReaction, PrIMeKinetics, StoichiometryError
-from util import custom_warning
+from classes import PrIMeSpecies, PrIMeReaction, PrIMeKinetics, ConversionError, StoichiometryError
+from util import custom_warning, pickle_dump, pickle_load
 
 warnings.formatwarning = custom_warning
 
@@ -31,21 +36,163 @@ class KineticsError(Exception):
 
 
 def main():
+    # Set up command line arguments
     parser = argparse.ArgumentParser(
         description='Parse the PrIMe database.',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('-o', '--outdir', type=str, metavar='DIR',
+                        help='Directory to save pickled dictionaries and lists in')
     parser.add_argument('depository', type=str, nargs='?', default='depository', metavar='PATH',
                         help='Path to PrIMe depository')
     args = parser.parse_args()
+    out_dir = args.outdir
     depository = args.depository
 
-    species_dict = parse_species(depository)
-    reactions_dict = parse_reactions(depository, species_dict)
-    nrxn = len(reactions_dict)
-    reactions_dict = get_kinetics(depository, reactions_dict)
+    prime_species_dict = prime_reactions_dict = prime_species_in_reactions_dict = rmg_species_dict = None
+    prime_species_path = os.path.join(out_dir, 'prime_species_dict.pickle')
+    prime_reactions_path = os.path.join(out_dir, 'prime_reactions_dict.pickle')
+    prime_species_in_reactions_path = os.path.join(out_dir, 'prime_species_in_reactions_dict.pickle')
+    rmg_species_path = os.path.join(out_dir, 'rmg_species_dict.pickle')
+    if out_dir is not None:
+        if not os.path.exists(out_dir):
+            os.mkdir(out_dir)
+        else:
+            # Check if we can load existing dictionaries, which could save a lot of time
+            print('Trying to load dictionaries...')
+            try:
+                prime_species_dict = pickle_load(prime_species_path)
+            except IOError:
+                print('Could not find prime_species_dict')
+            else:
+                print('Successfully loaded prime_species_dict')
+            try:
+                prime_reactions_dict = pickle_load(prime_reactions_path)
+            except IOError:
+                print('Could not find prime_reactions_dict')
+            else:
+                print('Successfully loaded prime_reactions_dict')
+            try:
+                prime_species_in_reactions_dict = pickle_load(prime_species_in_reactions_path)
+            except IOError:
+                print('Could not find prime_species_in_reactions_dict')
+            else:
+                print('Successfully loaded prime_species_in_reactions_dict')
+            try:
+                rmg_species_dict = pickle_load(rmg_species_path)
+            except IOError:
+                print('Could not find rmg_species_dict')
+            else:
+                print('Successfully loaded rmg_species_dict')
 
-    print('Number of valid reactions: {}'.format(nrxn))
-    print('Number of valid reactions with kinetics: {}'.format(len(reactions_dict)))
+    if prime_species_dict is None:
+        print('Parsing species...')
+        prime_species_dict = parse_species(depository)
+
+    parsed_reactions = False
+    nrxn_pre_kinetics = None
+    if prime_reactions_dict is None:
+        print('Parsing reactions...')
+        prime_reactions_dict = parse_reactions(depository, prime_species_dict)
+        nrxn_pre_kinetics = len(prime_reactions_dict)
+        print('Parsing kinetics...')
+        prime_reactions_dict = get_kinetics(depository, prime_reactions_dict)
+        parsed_reactions = True
+        # Note: The reactions are not necessarily in the correct direction at this point.
+        #       Have to run match_direction first.
+
+    print('Number of valid PrIMe species: {}'.format(len(prime_species_dict)))
+    if parsed_reactions:
+        print('Number of valid PrIMe reactions: {}'.format(nrxn_pre_kinetics))
+    print('Number of valid PrIMe reactions with kinetics: {}'.format(len(prime_reactions_dict)))
+
+    if out_dir is not None:
+        print('Saving PrIMe species and reactions dictionaries to {}'.format(out_dir))
+        pickle_dump(prime_species_path, prime_species_dict)
+        pickle_dump(prime_reactions_path, prime_reactions_dict)
+
+    if prime_species_in_reactions_dict is None:
+        print('Extracting species in reactions...')
+        # Only convert species actually involved in reactions
+        prime_species_in_reactions_dict = {}
+        for rxn in prime_reactions_dict.itervalues():
+            for spc in rxn.reactants:
+                prime_species_in_reactions_dict[spc.prime_id] = spc
+            for spc in rxn.products:
+                prime_species_in_reactions_dict[spc.prime_id] = spc
+
+    if out_dir is not None:
+        print('Saving PrIMe species in reactions dictionary to {}'.format(out_dir))
+        pickle_dump(prime_species_in_reactions_path, prime_species_in_reactions_dict)
+
+    print('Converting species to RMG types...')
+    if rmg_species_dict is None:
+        rmg_species_dict = {}
+    count_resolve_errors = 0
+    for prime_id, spc in prime_species_in_reactions_dict.iteritems():
+        # Don't bother converting if we already did so in a previous run
+        if prime_id in rmg_species_dict:
+            continue
+
+        try:
+            rmg_species_dict[prime_id] = spc.get_rmg_species()
+        except ConversionError as e:
+            count_resolve_errors += 1
+            warnings.warn('Skipped {}: {}'.format(prime_id, e))
+            continue
+        except (ValueError, AttributeError, AtomTypeError) as e:
+            warnings.warn('Skipped {}: {}'.format(prime_id, e))
+            continue
+        except KeyError as e:
+            warnings.warn('Skipped {}: Atom type {} is not supported.'.format(prime_id, e))
+            continue
+        except urllib2.URLError as e:
+            warnings.warn('URLError encountered for {}: {}, retrying...'.format(prime_id, e))
+            try:
+                rmg_species_dict[prime_id] = spc.get_rmg_species()
+            except urllib2.URLError as e:
+                warnings.warn('URLError encountered for {}: {}, retrying...'.format(prime_id, e))
+                try:
+                    rmg_species_dict[prime_id] = spc.get_rmg_species()
+                except urllib2.URLError as e:
+                    warnings.warn('Skipped {}: {}'.format(prime_id, e))
+                    continue
+        except Exception as e:
+            if "Couldn't parse" in str(e):
+                warnings.warn('Skipped {}: {}'.format(prime_id, e))
+                continue
+            else:
+                print('Error encountered during conversion of species {}.'.format(prime_id), file=sys.stderr)
+                # Save output regardless, so we don't have to do all the work again next time
+                if out_dir is not None:
+                    print('Saving RMG species dictionary to {}'.format(out_dir))
+                    pickle_dump(rmg_species_path, rmg_species_dict)
+                raise
+        else:
+            print('Converted {}.'.format(prime_id))
+
+    print('Number of PrIMe species in reactions: {}'.format(len(prime_species_in_reactions_dict)))
+    print('Number of RMG species in reactions: {}'.format(len(rmg_species_dict)))
+    print('Number of CIRpy resolve errors: {}'.format(count_resolve_errors))
+
+    if out_dir is not None:
+        print('Saving RMG species dictionary to {}'.format(out_dir))
+        pickle_dump(rmg_species_path, rmg_species_dict)
+
+    print('Converting reactions to RMG types...')
+    reactions = []
+    for rxn in prime_reactions_dict.itervalues():
+        try:
+            rxn.get_rmg_species_from_dict(rmg_species_dict)
+        except KeyError:
+            continue
+        else:
+            reactions.append(rxn.get_rmg_reaction())
+
+    print('Number of RMG reactions: {}'.format(len(reactions)))
+
+    if out_dir is not None:
+        print('Saving RMG reactions list to {}'.format(out_dir))
+        pickle_dump(os.path.join(out_dir, 'reactions.pickle'), reactions)
 
 
 def parse_species(depository):
