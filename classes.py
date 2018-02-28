@@ -107,6 +107,8 @@ class PrIMeReaction(object):
         self.prime_id = prime_id
         self.reactants = None
         self.products = None
+        self.rmg_reactants = None
+        self.rmg_products = None
         self.kinetics = None
         self._direction_matched = False
 
@@ -169,6 +171,9 @@ class PrIMeReaction(object):
         Match the direction of reactants and products to match the
         kinetics expression.
         """
+        if self.reactants is None or self.products is None:
+            raise Exception('Missing reactants or products for reaction {}.'.format(self.prime_id))
+
         if self.kinetics is not None:
             if self.kinetics.direction == 'forward':
                 self._direction_matched = True
@@ -176,6 +181,12 @@ class PrIMeReaction(object):
                 new_products = list(self.reactants)
                 self.reactants = list(self.products)
                 self.products = new_products
+
+                if self.rmg_reactants is not None and self.rmg_products is not None:
+                    new_rmg_products = list(self.rmg_reactants)
+                    self.rmg_reactants = list(self.rmg_products)
+                    self.rmg_products = new_rmg_products
+
                 self._direction_matched = True
             else:
                 raise Exception(
@@ -184,19 +195,37 @@ class PrIMeReaction(object):
         else:
             raise Exception('No kinetics set for reaction {}.'.format(self.prime_id))
 
+    def get_rmg_species_from_dict(self, rmg_species_dict):
+        """
+        Given a dictionary of RMG species with the same PrIMe ID
+        keys, extract the species corresponding to this reaction.
+        """
+        self.rmg_reactants = []
+        self.rmg_products = []
+
+        for spc in self.reactants:
+            self.rmg_reactants.append(rmg_species_dict[spc.prime_id])
+        for spc in self.products:
+            self.rmg_products.append(rmg_species_dict[spc.prime_id])
+
     def get_rmg_reaction(self):
         """
         Convert PrIMeReaction to an RMG reaction.
         """
         if not all((self.reactants, self.products, self.kinetics)):
-            raise ConversionError('Missing reactants, products, or kinetics in reaction {}.'.format(self.prime_id))
+            raise ConversionError('Missing reactants, products, or kinetics for reaction {}.'.format(self.prime_id))
         if not self._direction_matched:
             self.match_direction()
         
         reaction = Reaction()
-        reaction.reactants = [s.get_rmg_species() for s in self.reactants]
-        reaction.products = [s.get_rmg_species() for s in self.products]
+        if self.rmg_reactants is None or self.rmg_products is None:
+            reaction.reactants = [s.get_rmg_species() for s in self.reactants]
+            reaction.products = [s.get_rmg_species() for s in self.products]
+        else:
+            reaction.reactants = self.rmg_reactants
+            reaction.products = self.rmg_products
         reaction.kinetics = self.kinetics.expression
+
         return reaction
 
 
