@@ -46,16 +46,25 @@ class PrIMeSpecies(object):
         """
         if self.inchi is not None:
             return self.parse_inchi()
+
+        cas_error = False
         if self.cas is not None:
             try:
                 return self.parse_cas()
             except ConversionError:
                 if self.names is not None:
-                    pass
+                    cas_error = True
                 else:
                     raise
+
         if self.names is not None:
-            return self.parse_names()
+            try:
+                return self.parse_names()
+            except ConversionError:
+                if cas_error:
+                    raise ConversionError('Could not resolve CAS and name for species {}.'.format(self.prime_id))
+                else:
+                    raise
 
         raise ConversionError(
             'InChI, CAS, or name required for structure conversion of species {}.'.format(self.prime_id)
@@ -63,7 +72,7 @@ class PrIMeSpecies(object):
 
     def parse_inchi(self):
         rmg_species = Species()
-        rmg_species.molecule = [Molecule().fromInChI(self.inchi)]
+        rmg_species.molecule = [Molecule().fromInChI(self.inchi, backend='rdkit')]
         return rmg_species
             
     def parse_cas(self):
